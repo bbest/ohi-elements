@@ -132,10 +132,11 @@ if (!file.exists(rdata)){
   # goals to subgoals 
   nodes = goals %>%
     mutate(
-      group = ifelse(is.na(parent), 'goal', 'subgoal'),
-      id    = goal,
-      title = sprintf('<strong>%s</strong>: %s', goal, name)) %>%
-    select(id, label=goal, group, title)
+      group      = ifelse(is.na(parent), 'goal', 'subgoal'),
+      id         = goal,
+      title      = sprintf('<strong>%s</strong>: %s', goal, name),
+      target     = goal) %>%
+    select(id, label=goal, group, title, target)
   
   edges = goals %>%
     filter(!is.na(parent)) %>%
@@ -144,10 +145,11 @@ if (!file.exists(rdata)){
   # goals to index
   nodes = nodes %>%
     bind_rows(data_frame(
-      id = 'Index',
-      label = 'Index',
-      group = 'Index',
-      title = 'Index'))
+      id     = 'Index',
+      label  = 'Index',
+      group  = 'Index',
+      title  = 'Index',
+      target = 'Index'))
   
   edges = edges %>%
     bind_rows(
@@ -161,20 +163,38 @@ if (!file.exists(rdata)){
     filter(!target %in% c('pressures', 'resilience', 'spatial')) %>%
     mutate(
       group = 'layer for status',
-      id    = sprintf('%s-%s'  , target, layer),
-      label = sprintf('%s - %s', target, layer),
-      title = sprintf('<strong>%s</strong>: %s', layer, name)) %>%
-    select(id, label, group, title, target)
+      id    = sprintf('%s-s-%s'  , target, layer),
+      label = id,
+      title = sprintf('<strong>%s</strong>: %s', layer, name),
+      dimension = 'status') %>%
+    select(id, label, group, title, target, dimension)
+  
+  goal_status_layers = status_layers %>%
+    group_by(target, group, dimension) %>%
+    summarize(n = n()) %>%
+    mutate(
+      id    = sprintf('%s-s', target),
+      label = id)
   
   nodes = nodes %>%
     bind_rows(
-      status_layers %>%
-        select(id, label, group, title))
+      # add one node per goal-status of available layers
+      goal_status_layers,
+      # add layers for connection to goal-status
+      status_layers)
   
   edges = edges %>%
     bind_rows(
+      # connect goal to goal-status
+      goal_status_layers %>%
+        mutate(
+          to = sprintf('%s-s', target)) %>%
+        select(from = target, to),
+      # connect goal-status to layer
       status_layers %>%
-        select(from = target, to = id))
+        mutate(
+          from = sprintf('%s-s', target)) %>%
+        select(from, to = id))
   
   # layers for pressures
   pressure_layers = pressures_matrix %>%
@@ -188,19 +208,37 @@ if (!file.exists(rdata)){
     mutate(
       group = 'layer for pressures',
       id    = sprintf('%s-p-%s'  , goal, layer),
-      label = sprintf('%s -p- %s', goal, layer),
-      title = sprintf('<strong>%s</strong>: %s', layer, name)) %>%
-    select(id, label, group, title, goal, layer)
+      label = sprintf('%s-p-%s', goal, layer),
+      title = sprintf('<strong>%s</strong>: %s', layer, name),
+      dimension = 'pressures') %>%
+    select(id, label, group, title, target = goal, dimension)
   
+  goal_pressure_layers = pressure_layers %>%
+    group_by(target, group, dimension) %>%
+    summarize(n = n()) %>%
+    mutate(
+      id    = sprintf('%s-p', target),
+      label = id)
+      
   nodes = nodes %>%
     bind_rows(
-      pressure_layers %>%
-        select(id, label, group, title))
+      # add one node per goal-pressure of available layers
+      goal_pressure_layers,
+      # add layers for connection to goal-pressure
+      pressure_layers)
   
   edges = edges %>%
     bind_rows(
+      # connect goal to goal-pressure
+      goal_pressure_layers %>%
+        mutate(
+          to = sprintf('%s-p', target)) %>%
+        select(from = target, to),
+      # connect goal-pressure to layer
       pressure_layers %>%
-        select(from = goal, to = id))
+        mutate(
+          from = sprintf('%s-p', target)) %>%
+        select(from, to = id))
   
   # layers for resilience
   resilience_layers = resilience_matrix %>%
@@ -214,31 +252,52 @@ if (!file.exists(rdata)){
     mutate(
       group = 'layer for resilience',
       id    = sprintf('%s-r-%s'  , goal, layer),
-      label = sprintf('%s -r- %s', goal, layer),
-      title = sprintf('<strong>%s</strong>: %s', layer, name)) %>%
-    select(id, label, group, title, goal, layer)
+      label = sprintf('%s-r-%s', goal, layer),
+      title = sprintf('<strong>%s</strong>: %s', layer, name),
+      dimension = 'resilience') %>%
+    select(id, label, group, title, target=goal, dimension)
+  
+  goal_resilience_layers = resilience_layers %>%
+    group_by(target, group, dimension) %>%
+    summarize(n = n()) %>%
+    mutate(
+      id    = sprintf('%s-r', target),
+      label = id)
   
   nodes = nodes %>%
     bind_rows(
-      resilience_layers %>%
-        select(id, label, group, title))
+      # add one node per goal-resilience of available layers
+      goal_resilience_layers,
+      # add layers for connection to goal-resilience
+      resilience_layers)
   
   edges = edges %>%
     bind_rows(
+      # connect goal to goal-resilience
+      goal_resilience_layers %>%
+        mutate(
+          to = sprintf('%s-r', target)) %>%
+        select(from = target, to),
+      # connect goal-resilience to layer
       resilience_layers %>%
-        select(from = goal, to = id))
+        mutate(
+          from = sprintf('%s-r', target)) %>%
+        select(from, to = id))
   
-  # order legend: Index > goal > subgoal > layer for status > layer for pressures > layer for resilience
+  # order nodes & legend: Index > goals / subgoal > layer for status > layer for pressures > layer for resilience
+  nodes$target = factor(nodes$target, levels=unname(output_goals), ordered=T)
+  nodes$group  = factor(
+    nodes$group, 
+    levels=c(
+      'Index', 
+      'goal',
+      'subgoal',
+      'layer for status',
+      'layer for pressures',
+      'layer for resilience'), ordered=T)
   nodes = nodes %>%
-    mutate(
-      order = c(
-        'Index' = 1, 
-        'goal'  = 2,
-        'subgoal' = 3,
-        'layer for status' = 4,
-        'layer for pressures' = 5,
-        'layer for resilience' = 6)[group]) %>%
-    arrange(order, label)
+    arrange(target, group, label)
+  #View(nodes)
   
   # edges = edges %>%
   #   left_join(nodes, by=c('from','id')) %>%
