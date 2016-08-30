@@ -12,7 +12,15 @@ suppressPackageStartupMessages({
   library(aster) # devtools::install_github('FrissAnalytics/ohi-aster', subdir='asterHTMLwidget')
   library(visNetwork)
   library(colorspace) # hex()
+  library(sunburstR)  # devtools::install_github('timelyportfolio/sunburstR')
 })
+
+# TEMP: sunburstr demo
+sequences <- read.csv(
+  system.file("examples/visit-sequences.csv",package="sunburstR")
+  ,header=F
+  ,stringsAsFactors = FALSE
+)
 
 # load rdata for faster startup
 rdata = 'data/default.Rdata'

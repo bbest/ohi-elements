@@ -32,7 +32,9 @@ dashboardPage(
       tabItem(
         tabName='navigate',
         h2("Navigate Components"),
-        visNetworkOutput("network", height = '600px'),
+        #visNetworkOutput("network", height = '600px'),
         #verbatimTextOutput('message'),
+        sunburstOutput("sunburst"),
+        textOutput("selection"),
         uiOutput("message")
       ))))
