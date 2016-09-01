@@ -1,9 +1,9 @@
 shinyServer(function(input, output) {
-  
+
   v <- reactiveValues(sel_id = '', msg = '') # set default to GLOBAL = 0
-  
+
   get_network = reactive({
-    
+
     # get network based on selection
     net = list()
     net$nodes = nodes %>%
@@ -24,7 +24,7 @@ shinyServer(function(input, output) {
     # } else {
     #   sel_id = ''
     # }
-    # 
+    #
     # if (sel_id > ''){
     #   sel_edges = edges %>%
     #     filter(from == sel_id)
@@ -37,17 +37,17 @@ shinyServer(function(input, output) {
     #     net$edges,
     #     sel_edges)
     # }
-    
+
     return(net)
   })
-  
+
   # elements tab ----
-  
+
   output$network <- renderVisNetwork({
-    
+
     # use reactive
     #net = get_network()
-    
+
     # skip reactive get_network()
     net = list()
     net$nodes = nodes %>%
@@ -71,7 +71,7 @@ shinyServer(function(input, output) {
       #visEdges(arrows = "from") %>%
       # TODO levels in nodes: nodes <- data.frame(id = 1:4, level = c(2, 1, 1, 1))
       visHierarchicalLayout(
-        direction = "LR", 
+        direction = "LR",
         #parentCentralization = F, edgeMinimization = F, blockShifting = F,
         sortMethod = 'directed', # parentCentralization = F, # blockShifting = T, edgeMinimization = T,
         levelSeparation = 400, nodeSpacing = 200) %>% #
@@ -89,13 +89,13 @@ shinyServer(function(input, output) {
         navigationButtons = T,
         keyboard = TRUE, tooltipDelay = 0) #%>%
       # visExport()
-    
+
   })
-  
+
   observeEvent(input$network_sel, {
     v$msg <- paste(v$msg, "network_sel: ", input$network_selected, br())
   })
-  
+
   observeEvent(input$network_selected, {
     v$msg <- paste(v$msg, "network_selected: ", input$network_selected, br())
 
@@ -116,33 +116,42 @@ shinyServer(function(input, output) {
         #visFocus(id = input$Focus, scale = 4)
    #}
   })
-    
+
   observeEvent(input$network_hover, {
     #v$msg <- paste(v$msg, "network_hover: ", input$network_hover, br())
   })
-  
+
   #observeEvent(input$network_selectedBy, {
   #  v$msg <- paste(v$msg, "network_selectedBy: ", input$network_selectedBy, br())
   #})
-  
+
   # sunburstr ----
-  
+
   output$sunburst <- renderSunburst({
     #invalidateLater(1000, session)
     
-    sequences <- sequences[sample(nrow(sequences),1000),]
+    # prep Elements and paths for sunburstR ----
+    # TODO: 
+    # - add description inset box: full name, category, description (and link) of element
+    # - make clickable: a) hold on description box to click link there, b) clickable to link directly
+
+    add_shiny(
+      sunburst(
+        paths %>% select(path, layer_weight), 
+        percent=F,
+        colors = cols,
+        legendOrder = c(names(layer_colors), goals$goal),
+        explanation = "function(d){return d.name}",
+        sortFunction = htmlwidgets::JS(sort_fxn)))
     
-    add_shiny(sunburst(
-      sequences, 
-      explanation = "function(d){return d.name}"))
   })
-  
+
   selection <- reactive({
     input$sunburst_mouseover
   })
-  
+
   output$selection <- renderText(selection())
-  
+
   # message ----
   output$message <- renderUI({ HTML(v$msg) })
 })

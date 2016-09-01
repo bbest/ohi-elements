@@ -3,6 +3,7 @@ suppressPackageStartupMessages({
   library(leaflet)
   library(dplyr)
   library(readr)
+  library(stringr)
   library(tidyr)
   library(shiny)
   library(shinydashboard)
@@ -10,17 +11,10 @@ suppressPackageStartupMessages({
   library(htmlwidgets) 
   library(jsonlite)
   library(aster) # devtools::install_github('FrissAnalytics/ohi-aster', subdir='asterHTMLwidget')
-  library(visNetwork)
+  #library(visNetwork)
   library(colorspace) # hex()
   library(sunburstR)  # devtools::install_github('timelyportfolio/sunburstR')
 })
-
-# TEMP: sunburstr demo
-sequences <- read.csv(
-  system.file("examples/visit-sequences.csv",package="sunburstR")
-  ,header=F
-  ,stringsAsFactors = FALSE
-)
 
 # load rdata for faster startup
 rdata = 'data/default.Rdata'
@@ -135,185 +129,161 @@ if (!file.exists(rdata)){
     }
   }
   
-  # prep nodes and edges for network Components ----
+
+  # elements for sunburstR ----
   
-  # goals to subgoals 
+  # set colors for layers (pressures, resilience, status)
+  layer_colors = RColorBrewer::brewer.pal(5,'Pastel1') %>%
+    .[c(1,3,2)] %>%
+    setNames(c('pressure','resilience','status'))
+  
+  # goals, subgoals 
+  subgoals = goals %>% filter(!is.na(parent)) %>% .$goal
   nodes = goals %>%
     mutate(
-      group      = ifelse(is.na(parent), 'goal', 'subgoal'),
       id         = goal,
-      title      = sprintf('<strong>%s</strong>: %s', goal, name),
-      target     = goal) %>%
-    select(id, label=goal, group, title, target)
-  
-  edges = goals %>%
-    filter(!is.na(parent)) %>%
-    select(from = parent, to = goal)
-  
-  # goals to index
-  nodes = nodes %>%
-    bind_rows(data_frame(
-      id     = 'Index',
-      label  = 'Index',
-      group  = 'Index',
-      title  = 'Index',
-      target = 'Index'))
-  
-  edges = edges %>%
-    bind_rows(
-      goals %>%
-        filter(is.na(parent)) %>%
-        select(to = goal) %>%
-        mutate(from = 'Index'))
-  
-  # layers for status
-  status_layers = layers_by_target %>%
-    filter(!target %in% c('pressures', 'resilience', 'spatial')) %>%
-    mutate(
-      group = 'layer for status',
-      id    = sprintf('%s-s-%s'  , target, layer),
-      label = id,
-      title = sprintf('<strong>%s</strong>: %s', layer, name),
-      dimension = 'status') %>%
-    select(id, label, group, title, target, dimension)
-  
-  goal_status_layers = status_layers %>%
-    group_by(target, group, dimension) %>%
-    summarize(n = n()) %>%
-    mutate(
-      id    = sprintf('%s-s', target),
-      label = id)
-  
+      category   = ifelse(is.na(parent), 'goal', 'subgoal'),
+      path       = ifelse(is.na(parent), goal, sprintf('%s-%s', parent, goal))) %>%
+    select(id, name, category, path, color, order=order_color, description)
+  # add goal-goal element to balance goal-subgoal
   nodes = nodes %>%
     bind_rows(
-      # add one node per goal-status of available layers
-      goal_status_layers,
-      # add layers for connection to goal-status
-      status_layers)
-  
-  edges = edges %>%
-    bind_rows(
-      # connect goal to goal-status
-      goal_status_layers %>%
+      nodes %>%
+        filter(!id %in% subgoals) %>%
         mutate(
-          to = sprintf('%s-s', target)) %>%
-        select(from = target, to),
-      # connect goal-status to layer
-      status_layers %>%
-        mutate(
-          from = sprintf('%s-s', target)) %>%
-        select(from, to = id))
+          path = sprintf('%s-%s', id, id)))
+  # NOTE: nodes$id repeats!
   
-  # layers for pressures
-  pressure_layers = pressures_matrix %>%
-    gather(layer, value, -goal, -element, -element_name) %>%
-    filter(!is.na(value)) %>%
-    select(goal, layer) %>%
-    # TODO: add individual elements vs for now getting distinct
-    distinct() %>%
-    left_join(layers, by='layer') %>%
-    select(goal, layer, name) %>%
-    mutate(
-      group = 'layer for pressures',
-      id    = sprintf('%s-p-%s'  , goal, layer),
-      label = sprintf('%s-p-%s', goal, layer),
-      title = sprintf('<strong>%s</strong>: %s', layer, name),
-      dimension = 'pressures') %>%
-    select(id, label, group, title, target = goal, dimension)
-  
-  goal_pressure_layers = pressure_layers %>%
-    group_by(target, group, dimension) %>%
-    summarize(n = n()) %>%
-    mutate(
-      id    = sprintf('%s-p', target),
-      label = id)
-      
+  # layers
+  targets_path = nodes %>%
+    filter(str_detect(path, '-')) %>%
+    select(target=id, parent=path)
   nodes = nodes %>%
     bind_rows(
-      # add one node per goal-pressure of available layers
-      goal_pressure_layers,
-      # add layers for connection to goal-pressure
-      pressure_layers)
-  
-  edges = edges %>%
-    bind_rows(
-      # connect goal to goal-pressure
-      goal_pressure_layers %>%
+      # layers for status
+      layers_by_target %>%
+        filter(target %in% goals$goal) %>% 
+        left_join(
+          targets_path, by='target') %>% 
         mutate(
-          to = sprintf('%s-p', target)) %>%
-        select(from = target, to),
-      # connect goal-pressure to layer
-      pressure_layers %>%
+          id       = sprintf('s_%s', layer),
+          category = 'status',
+          path     = sprintf('%s-s_%s', parent, layer),
+          order    = 100,
+          color    = layer_colors[['status']]) %>%
+        select(id, name, category, path, color, order, color, description),
+      # layers for pressures
+      pressures_matrix %>%
+        gather(layer, value, -goal, -element, -element_name) %>%
+        filter(!is.na(value)) %>%
+        select(target=goal, layer) %>%
+        left_join(
+          targets_path, by='target') %>%
+        # TODO: add individual elements vs for now getting distinct
+        distinct() %>%
+        left_join(
+          layers, by='layer') %>%
         mutate(
-          from = sprintf('%s-p', target)) %>%
-        select(from, to = id))
+          id    = sprintf('p_%s', layer),
+          category = 'pressure',
+          path     = sprintf('%s-p_%s', parent, layer),
+          order    = 200,
+          color    = layer_colors[['pressure']]) %>%
+        select(id, name, category, path, color, order, color, description),
+      # layers for resilience
+      resilience_matrix %>%
+        gather(layer, value, -goal, -element) %>%
+        filter(!is.na(value)) %>%
+        select(target=goal, layer) %>%
+        left_join(
+          targets_path, by='target') %>%
+        # TODO: add individual elements vs for now getting distinct
+        distinct() %>%
+        left_join(
+          layers, by='layer') %>%
+        mutate(
+          id    = sprintf('r_%s', layer),
+          category = 'resilience',
+          path     = sprintf('%s-r_%s', parent, layer),
+          order    = 300,
+          color    = layer_colors[['resilience']]) %>%
+        select(id, name, category, path, color, order, color, description))
   
-  # layers for resilience
-  resilience_layers = resilience_matrix %>%
-    gather(layer, value, -goal, -element) %>%
-    filter(!is.na(value)) %>%
-    select(goal, layer) %>%
-    # TODO: add individual elements vs for now getting distinct
-    distinct() %>%
-    left_join(layers, by='layer') %>%
-    select(goal, layer, name) %>%
+  # filter paths to terminal paths
+  paths = nodes
+  for (pth in paths$path){ # pth = paths$path[29]
+    if (
+      sum(str_detect(paths$path, sprintf('%s-.*', pth))) > 0 | 
+      # remove goal nodes without layers, including goal-goal having subgoals and no goal-goal-layer such as LE,FP have
+      str_count(pth, '-') < 2){
+      paths = filter(paths, path != pth)
+    }
+  }
+  
+  # set layer weight based on matching goals weight based on number of layers
+  paths2 = paths %>%
     mutate(
-      group = 'layer for resilience',
-      id    = sprintf('%s-r-%s'  , goal, layer),
-      label = sprintf('%s-r-%s', goal, layer),
-      title = sprintf('<strong>%s</strong>: %s', layer, name),
-      dimension = 'resilience') %>%
-    select(id, label, group, title, target=goal, dimension)
+      path1 = str_replace(path, '(.+)-(.+)-(.+)','\\1'),
+      path2 = str_replace(path, '(.+)-(.+)-(.+)','\\2')) %>%
+    left_join(
+      goals %>% 
+        select(goal, path2_weight=weight),
+      by=c('path2'='goal')) %>%
+    left_join(
+      goals %>% 
+        select(goal, path1_weight=weight),
+      by=c('path1'='goal'))
+  goals_with_subgoals = goals %>% filter(goal %in% c(goals$parent)) %>% .$goal
+  path1_with_goalgoallayer = filter(paths2, path2 %in% goals_with_subgoals) %>% .$path1
+  paths = bind_rows(
+    # goal-goal-layers or goal-subgoal-layers
+    paths2 %>%
+      filter(!path1 %in% path1_with_goalgoallayer) %>%
+      group_by(path2, path2_weight) %>%
+      mutate(
+        layer_weight = path2_weight / n()) %>%
+      ungroup(),
+    # goal-subgoal-layers with goal-goal-layer, eg: FP-FP-s_fp_wildcaught_weight, LE-LE-s_le_sector_weight
+    paths2 %>%
+      filter(path1 %in% path1_with_goalgoallayer) %>%
+      group_by(path1, path1_weight) %>%
+      mutate(
+        layers_weight = path1_weight / n()) %>%
+      ungroup() %>%
+      group_by(path2, path2_weight) %>%
+      mutate(
+        layer_weight = ifelse(
+          path2 %in% path1_with_goalgoallayer,
+          layers_weight,
+          (path2_weight - layers_weight) / n())) %>%
+      ungroup())
   
-  goal_resilience_layers = resilience_layers %>%
-    group_by(target, group, dimension) %>%
-    summarize(n = n()) %>%
+  cols = list(
+    range  = c(
+      unname(layer_colors),
+      distinct(nodes, id, color) %>% .$color), # plotCol(clr)
+    domain = c(
+      names(layer_colors),
+      distinct(nodes, id, color) %>% .$id))
+  
+  id_order = nodes %>%
+    distinct(id, order) %>% 
+    bind_rows(
+      data_frame(
+        id = names(layer_colors),
+        order = (-1*length(layer_colors)):-1)) %>%
+    arrange(order, id) %>%
     mutate(
-      id    = sprintf('%s-r', target),
-      label = id)
+      d = row_number(),
+      s = sprintf('%s:%d', id, d))
   
-  nodes = nodes %>%
-    bind_rows(
-      # add one node per goal-resilience of available layers
-      goal_resilience_layers,
-      # add layers for connection to goal-resilience
-      resilience_layers)
-  
-  edges = edges %>%
-    bind_rows(
-      # connect goal to goal-resilience
-      goal_resilience_layers %>%
-        mutate(
-          to = sprintf('%s-r', target)) %>%
-        select(from = target, to),
-      # connect goal-resilience to layer
-      resilience_layers %>%
-        mutate(
-          from = sprintf('%s-r', target)) %>%
-        select(from, to = id))
-  
-  # order nodes & legend: Index > goals / subgoal > layer for status > layer for pressures > layer for resilience
-  nodes$target = factor(nodes$target, levels=unname(output_goals), ordered=T)
-  nodes$group  = factor(
-    nodes$group, 
-    levels=c(
-      'Index', 
-      'goal',
-      'subgoal',
-      'layer for status',
-      'layer for pressures',
-      'layer for resilience'), ordered=T)
-  nodes = nodes %>%
-    arrange(target, group, label)
-  #View(nodes)
-  
-  # edges = edges %>%
-  #   left_join(nodes, by=c('from','id')) %>%
-  #   select(from, to, from_id=id, from_label=label, from_group=group) %>%
-  #   left_join(nodes, by=c('to','id')) %>%
-  #   select(from, to, to_id=id, to_label=label, to_group=group) %>%
-  #   
-  #   arrange()
+  sort_fxn = paste(
+    "
+    function(a,b){
+    abb = {", paste(id_order$s, collapse=',\n    '), "  }
+    return abb[a.name] - abb[b.name];
+    }
+    ",sep="\n")
   
   # save to rdata
   save.image(rdata)
